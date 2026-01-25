@@ -270,13 +270,14 @@ init();
 // --- SERVER SYNC ---
 async function syncWithServer() {
     try {
-        await fetch('http://localhost:3000/api/sync-alerts', {
+        // REPLACE 'https://your-app-name.onrender.com' WITH YOUR ACTUAL RENDER URL
+        await fetch('https://my-stock-alerts.onrender.com//api/sync-alerts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data) // Send our entire data object
+            body: JSON.stringify(data)
         });
         console.log("Sent data to server.");
     } catch (error) {
-        console.error("Could not sync with server (is it running?)", error);
+        console.error("Could not sync with server", error);
     }
 }
