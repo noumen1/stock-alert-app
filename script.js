@@ -271,7 +271,7 @@ init();
 async function syncWithServer() {
     try {
         // REPLACE 'https://your-app-name.onrender.com' WITH YOUR ACTUAL RENDER URL
-        await fetch('https://my-stock-alerts.onrender.com//api/sync-alerts', {
+        await fetch('https://my-stock-alerts.onrender.com/api/sync-alerts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
