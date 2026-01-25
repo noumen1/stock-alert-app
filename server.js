@@ -22,9 +22,11 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 // --- DATABASE CONNECTION ---
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => console.error('❌ MongoDB Error:', err));
+mongoose.connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 5000 // Fail after 5 seconds if can't connect
+})
+.then(() => console.log('✅ Connected to MongoDB'))
+.catch(err => console.error('❌ MongoDB Error:', err));
 
 // Define the "Shape" of our data
 const AlertSchema = new mongoose.Schema({
@@ -91,37 +93,47 @@ app.post('/api/sync-alerts', async (req, res) => {
 // --- MONITORING LOOP ---
 
 async function checkPrices() {
-    // 1. Get Untriggered Alerts from DB
-    const pendingAlerts = await Alert.find({ triggered: false });
+    try {
+        // 1. Get Untriggered Alerts
+        const pendingAlerts = await Alert.find({ triggered: false });
+        if (pendingAlerts.length === 0) return;
 
-    if (pendingAlerts.length === 0) return;
-    console.log(`--- Checking ${pendingAlerts.length} pending alerts ---`);
+        console.log(`--- Checking ${pendingAlerts.length} pending alerts ---`);
 
-    for (const alert of pendingAlerts) {
-        try {
-            const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${FINNHUB_API_KEY}`);
-            const currentPrice = response.data.c;
+        for (const alert of pendingAlerts) {
+            console.log(`Checking ${alert.ticker}...`);
             
-            if (!currentPrice) continue;
+            // Fetch Price
+            let currentPrice = 0;
+            try {
+                const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${FINNHUB_API_KEY}`);
+                currentPrice = response.data.c;
+            } catch (err) {
+                console.error(`API Error for ${alert.ticker}: ${err.message}`);
+                continue; 
+            }
 
+            // Check Condition
             let shouldTrigger = false;
             if (alert.condition === 'above' && currentPrice > parseFloat(alert.price)) shouldTrigger = true;
             else if (alert.condition === 'below' && currentPrice < parseFloat(alert.price)) shouldTrigger = true;
 
             if (shouldTrigger) {
-                console.log(`🚨 TRIGGERED: ${alert.ticker}`);
+                console.log(`🚨 TRIGGERED: ${alert.ticker} (Price: ${currentPrice})`);
                 
-                await sendEmail(alert.ticker, currentPrice, alert.price, alert.condition);
-                await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition);
+                // Send Notifications (don't let these crash the loop)
+                try { await sendEmail(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Email failed", e); }
+                try { await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Telegram failed", e); }
                 
                 // UPDATE DB
+                console.log(`Saving state for ${alert.ticker}...`);
                 alert.triggered = true;
-                await alert.save();
+                await alert.save(); 
+                console.log(`✅ Save successful for ${alert.ticker}`);
             }
-
-        } catch (error) {
-            console.error(`Error checking ${alert.ticker}:`, error.message);
         }
+    } catch (error) {
+        console.error("Critical Loop Error:", error);
     }
 }
 
