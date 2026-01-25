@@ -1,5 +1,6 @@
 require('dotenv').config(); // Allows using .env file for secrets
 const express = require('express');
+const path = require('path');
 const axios = require('axios');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
@@ -8,6 +9,7 @@ const mongoose = require('mongoose'); // Database tool
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static(__dirname));
 
 // --- CONFIGURATION (Use Environment Variables) ---
 const PORT = process.env.PORT || 3000;
@@ -139,6 +141,10 @@ async function sendTelegram(ticker, current, target, condition) {
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     try { await axios.post(url, { chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' }); } catch (e) {}
 }
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // Start Server
 app.listen(PORT, () => {
