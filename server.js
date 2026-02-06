@@ -101,8 +101,6 @@ async function checkPrices() {
         console.log(`--- Checking ${pendingAlerts.length} pending alerts ---`);
 
         for (const alert of pendingAlerts) {
-            console.log(`Checking ${alert.ticker}...`);
-            
             // Fetch Price
             let currentPrice = 0;
             try {
@@ -119,17 +117,27 @@ async function checkPrices() {
             else if (alert.condition === 'below' && currentPrice < parseFloat(alert.price)) shouldTrigger = true;
 
             if (shouldTrigger) {
-                console.log(`🚨 TRIGGERED: ${alert.ticker} (Price: ${currentPrice})`);
-                
-                // Send Notifications (don't let these crash the loop)
-                try { await sendEmail(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Email failed", e); }
-                try { await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Telegram failed", e); }
-                
-                // UPDATE DB
-                console.log(`Saving state for ${alert.ticker}...`);
-                alert.triggered = true;
-                await alert.save(); 
-                console.log(`✅ Save successful for ${alert.ticker}`);
+                console.log(`⚡ Condition met for ${alert.ticker}. Attempting to lock...`);
+
+                // --- ATOMIC LOCK (The Fix) ---
+                // We try to find the alert AND flip it to true in one split-second operation.
+                // MongoDB guarantees only one request can do this.
+                const result = await Alert.updateOne(
+                    { id: alert.id, triggered: false }, // Only update if still false
+                    { triggered: true }
+                );
+
+                if (result.modifiedCount === 1) {
+                    // We won the race! We are the only one sending the alert.
+                    console.log(`🚨 TRIGGERED & LOCKED: ${alert.ticker} (Price: ${currentPrice})`);
+                    
+                    try { await sendEmail(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Email failed", e); }
+                    try { await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Telegram failed", e); }
+                    
+                } else {
+                    // Someone else (another loop) beat us to it. Do nothing.
+                    console.log(`⚠️ ${alert.ticker} was already handled by another loop. Skipping.`);
+                }
             }
         }
     } catch (error) {

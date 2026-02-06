@@ -1,0 +1,26 @@
+key: c1knvdq37fkpcj5an3i0
+
+webhook secret: c1knvdq37fkpcj5an3j0
+
+StockApp
+hasło do aplikacji: zrhc wfeh uwlq knzb
+
+Telegram:
+MyStockAlerts_2026_Bot
+8357460448:AAFoTW6d65oeFhSMzPxABAlfp78Oze-Si3E
+
+userinfoID: 8552136353
+
+MongoDB user&password:
+stock_alert_app
+noumen1_db_user
+bYC82Uflw3jCKJsz
+
+mongodb+srv://noumen1_db_user:bYC82Uflw3jCKJsz@cluster0.topatex.mongodb.net/?appName=Cluster0
+
+
+
+
+git remote add origin https://github.com/noumen1/stock-alert-app.git
+git branch -M main
+git push -u origin main
