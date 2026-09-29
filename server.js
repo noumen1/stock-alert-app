@@ -90,6 +90,68 @@ app.post('/api/sync-alerts', async (req, res) => {
     res.json({ success: true });
 });
 
+// --- ALTUCHER STRATEGY AUTOMATION ---
+const NDQ_100 = [
+    'ADBE','AMD','ABNB','ALNY','GOOGL','GOOG','AMZN','AEP','AMGN','ADI','AAPL','AMAT','APP',
+    'ARM','ASML','ADSK','ADP','AXON','BKR','BKNG','AVGO','CDNS','CHTR','CTAS','CSCO','CCEP',
+    'CTSH','CMCSA','CEG','CPRT','CSGP','COST','CRWD','CSX','DDOG','DXCM','FANG','DASH','EA',
+    'EXC','FAST','FER','FTNT','GEHC','GILD','HON','IDXX','INSM','INTC','INTU','ISRG','KDP',
+    'KLAC','KHC','LRCX','LIN','MAR','MRVL','MELI','META','MCHP','MU','MSFT','MSTR','MDLZ',
+    'MPWR','MNST','NFLX','NVDA','NXPI','ORLY','ODFL','PCAR','PLTR','PANW','PAYX','PYPL',
+    'PDD','PEP','QCOM','REGN','ROP','ROST','SNDK','STX','SHOP','SBUX','SNPS','TMUS','TTWO',
+    'TSLA','TXN','TRI','VRSK','VRTX','WMT','WBD','WDC','WDAY','XEL','ZS'
+];
+
+// New route to let the frontend load alerts directly from MongoDB
+app.get('/api/alerts', async (req, res) => {
+    try {
+        const alerts = await Alert.find();
+        res.json(alerts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// New route to generate the Altucher alerts
+app.post('/api/generate-altucher', async (req, res) => {
+    // Respond immediately so the browser doesn't timeout waiting for 100 Finnhub calls
+    res.json({ message: "Background generation started. It will take ~2 minutes." });
+    
+    console.log("Starting Altucher 9.5% Alert Generation...");
+    
+    // Clear old Altucher alerts so the database doesn't bloat daily
+    await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
+
+    for (let i = 0; i < NDQ_100.length; i++) {
+        const ticker = NDQ_100[i];
+        try {
+            // Fetch quote. 'pc' is the Previous Close.
+            const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_API_KEY}`);
+            const prevClose = response.data.pc;
+
+            if (prevClose && prevClose > 0) {
+                // Calculate 9.5% below previous close to give a slight buffer before 10%
+                const targetPrice = (prevClose * 0.905).toFixed(2);
+
+                await Alert.create({
+                    id: Date.now() + i, // Ensure unique ID
+                    ticker: ticker,
+                    price: targetPrice,
+                    condition: 'below',
+                    description: 'Altucher 9.5% Drop',
+                    triggered: false
+                });
+            }
+        } catch (err) {
+            console.error(`Failed to setup ${ticker}:`, err.message);
+        }
+        
+        // 🛑 CRITICAL: Sleep for 1.2 seconds to respect Finnhub's 60 calls/min limit
+        await new Promise(resolve => setTimeout(resolve, 1200));
+    }
+    console.log("✅ Finished generating Altucher alerts.");
+});
+
 // --- MONITORING LOOP ---
 
 async function checkPrices() {

@@ -33,14 +33,57 @@ const newGroupNameInput = document.getElementById('new-group-name');
 const addGroupBtn = document.getElementById('add-group-btn');
 
 // 4. STORAGE & INIT
-function loadData() {
-    const stored = localStorage.getItem('alert_system_data');
-    if (stored) {
-        data = JSON.parse(stored);
-    } else {
-        data = JSON.parse(JSON.stringify(defaultData)); 
+// Replace your existing loadData() function with this async version:
+async function loadData() {
+    try {
+        const response = await fetch('https://my-stock-alerts.onrender.com/api/alerts');
+        const dbAlerts = await response.json();
+
+        // Group the database alerts back into lists for the UI
+        data = { "Altucher Daytrade": [], "Manual Alerts": [] };
+
+        dbAlerts.forEach(alert => {
+            if (alert.description === 'Altucher 9.5% Drop') {
+                data["Altucher Daytrade"].push(alert);
+            } else {
+                data["Manual Alerts"].push(alert);
+            }
+        });
+
+        renderSidebar();
+        
+        // Switch to the Altucher group by default if it exists
+        if (data["Altucher Daytrade"].length > 0) {
+            switchGroup("Altucher Daytrade");
+        } else {
+            const firstGroup = Object.keys(data)[0];
+            if(firstGroup) switchGroup(firstGroup);
+        }
+    } catch (error) {
+        console.error("Failed to load from server", error);
+        // Fallback to empty if server fails
+        data = { "Altucher Daytrade": [], "Manual Alerts": [] };
     }
 }
+
+// Modify your init() function slightly to handle the async loadData
+async function init() {
+    await loadData();
+}
+
+// Wire up the new Altucher Generation Button (Add this at the bottom of script.js)
+document.getElementById('generate-altucher-btn').addEventListener('click', async () => {
+    const msg = "This will clear yesterday's Altucher alerts and generate new ones for the NDQ 100 based on the last closing price.\n\nIt takes ~2 minutes due to API rate limits. Proceed?";
+    if (confirm(msg)) {
+        try {
+            await fetch('https://my-stock-alerts.onrender.com/api/generate-altucher', { method: 'POST' });
+            alert("Generation started! The alerts will populate in the background over the next 2 minutes. Refresh this page shortly to see them.");
+        } catch (error) {
+            console.error("Error triggering generation:", error);
+            alert("Failed to start generation.");
+        }
+    }
+});
 
 function saveData() {
     localStorage.setItem('alert_system_data', JSON.stringify(data));
