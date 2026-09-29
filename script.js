@@ -196,7 +196,43 @@ function renderList() {
             warning.style.color = '#c0392b';
             warning.style.marginBottom = '15px';
             warning.style.borderRadius = '6px';
-            warning.innerHTML = `<strong>⚠️ Missing ${missing.length} Stocks (API Drops):</strong><br> ${missing.join(', ')}`;
+            warning.innerHTML = `<strong>⚠️ Missing ${missing.length} Stocks (API Drops):</strong><br> <span style="font-size: 0.85em;">${missing.join(', ')}</span><br><br>`;
+            
+            // Generate the Retry Button dynamically
+            const retryBtn = document.createElement('button');
+            retryBtn.textContent = '🔄 Retry Missing Stocks';
+            retryBtn.style.padding = '8px 15px';
+            retryBtn.style.backgroundColor = '#c0392b';
+            retryBtn.style.color = 'white';
+            retryBtn.style.border = 'none';
+            retryBtn.style.borderRadius = '4px';
+            retryBtn.style.cursor = 'pointer';
+            retryBtn.style.fontWeight = 'bold';
+            
+            retryBtn.onclick = async () => {
+                retryBtn.disabled = true;
+                retryBtn.textContent = '⏳ Retrying...';
+                retryBtn.style.backgroundColor = '#95a5a6';
+                
+                try {
+                    // Send the specific missing tickers to the backend
+                    await fetch('https://my-stock-alerts.onrender.com/api/retry-altucher', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tickers: missing })
+                    });
+                    
+                    const estTime = Math.ceil((missing.length * 1.2) / 60);
+                    alert(`Retry started for ${missing.length} stocks. This will take ~${estTime} minute(s) in the background. Refresh the page shortly.`);
+                } catch (err) {
+                    alert("Failed to send retry request.");
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = '🔄 Retry Missing Stocks';
+                    retryBtn.style.backgroundColor = '#c0392b';
+                }
+            };
+            
+            warning.appendChild(retryBtn);
             listViewContent.appendChild(warning);
         } else if (list.length > 0) {
             const success = document.createElement('div');
