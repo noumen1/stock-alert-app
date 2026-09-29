@@ -59,24 +59,12 @@ app.post('/api/sync-alerts', async (req, res) => {
         items.forEach(item => incomingAlerts.push(item));
     });
 
-    console.log(`Received ${incomingAlerts.length} alerts from frontend.`);
-
-    // SYNC LOGIC:
-    // We loop through incoming alerts. If one exists in DB, we keep its 'triggered' status.
-    // If it's new, we add it. 
-    // (Note: For a simple app, we will just upsert based on ID)
-    
+    // 1. Upsert incoming alerts
     for (const item of incomingAlerts) {
-        // Try to find it
         const existing = await Alert.findOne({ id: item.id });
-        
         if (!existing) {
-            // Create new
             await Alert.create(item);
         } else {
-            // Update details (description/price) but DON'T overwrite 'triggered' if it's true
-            // If the user changed the target price, maybe we should reset triggered? 
-            // For now, let's keep it simple: Only update text fields.
             existing.ticker = item.ticker;
             existing.price = item.price;
             existing.description = item.description;
@@ -84,8 +72,12 @@ app.post('/api/sync-alerts', async (req, res) => {
         }
     }
     
-    // Optional: Remove alerts from DB that are no longer in the frontend list
-    // (Skipping for complexity, but good to know)
+    // 2. CLEANUP: Remove manual alerts from the database if you deleted them in the UI.
+    const incomingIds = incomingAlerts.map(a => a.id);
+    await Alert.deleteMany({ 
+        id: { $nin: incomingIds }, 
+        description: { $ne: 'Altucher 9.5% Drop' } // Protects Altucher alerts from accidental deletion
+    });
 
     res.json({ success: true });
 });

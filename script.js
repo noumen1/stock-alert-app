@@ -39,30 +39,47 @@ async function loadData() {
         const response = await fetch('https://my-stock-alerts.onrender.com/api/alerts');
         const dbAlerts = await response.json();
 
-        // Group the database alerts back into lists for the UI
-        data = { "Altucher Daytrade": [], "Manual Alerts": [] };
+        // 1. Restore structure from localStorage to keep your custom list names
+        const stored = localStorage.getItem('alert_system_data');
+        if (stored) {
+            data = JSON.parse(stored);
+            Object.keys(data).forEach(key => data[key] = []); // Empty them to refill from DB
+        } else {
+            data = { "Altucher Daytrade": [] };
+        }
 
+        if (!data["Altucher Daytrade"]) data["Altucher Daytrade"] = [];
+
+        // 2. Populate alerts
         dbAlerts.forEach(alert => {
             if (alert.description === 'Altucher 9.5% Drop') {
                 data["Altucher Daytrade"].push(alert);
             } else {
-                data["Manual Alerts"].push(alert);
+                // Try to place manual alerts in a custom list, fallback to "Manual Alerts"
+                const customGroups = Object.keys(data).filter(g => g !== "Altucher Daytrade");
+                const targetGroup = customGroups.length > 0 ? customGroups[0] : "Manual Alerts";
+                if (!data[targetGroup]) data[targetGroup] = [];
+                data[targetGroup].push(alert);
             }
         });
 
+        // 3. Clean up: If "Manual Alerts" is empty and you didn't explicitly save it, remove it
+        if (data["Manual Alerts"] && data["Manual Alerts"].length === 0) {
+            const storedRaw = stored ? JSON.parse(stored) : {};
+            if (!storedRaw["Manual Alerts"]) delete data["Manual Alerts"];
+        }
+
         renderSidebar();
         
-        // Switch to the Altucher group by default if it exists
-        if (data["Altucher Daytrade"].length > 0) {
+        // Switch to Altucher list by default if populated
+        if (data["Altucher Daytrade"].length > 0 && !currentGroup) {
             switchGroup("Altucher Daytrade");
-        } else {
+        } else if (!currentGroup) {
             const firstGroup = Object.keys(data)[0];
-            if(firstGroup) switchGroup(firstGroup);
+            if (firstGroup) switchGroup(firstGroup);
         }
     } catch (error) {
         console.error("Failed to load from server", error);
-        // Fallback to empty if server fails
-        data = { "Altucher Daytrade": [], "Manual Alerts": [] };
     }
 }
 
@@ -165,8 +182,41 @@ function renderList() {
     const list = data[currentGroup] || [];
     listViewContent.innerHTML = ''; 
 
+    // --- NDQ 100 MISSING STOCKS VALIDATION ---
+    if (currentGroup === 'Altucher Daytrade') {
+        const NDQ_100 = ['ADBE','AMD','ABNB','ALNY','GOOGL','GOOG','AMZN','AEP','AMGN','ADI','AAPL','AMAT','APP','ARM','ASML','ADSK','ADP','AXON','BKR','BKNG','AVGO','CDNS','CHTR','CTAS','CSCO','CCEP','CTSH','CMCSA','CEG','CPRT','CSGP','COST','CRWD','CSX','DDOG','DXCM','FANG','DASH','EA','EXC','FAST','FER','FTNT','GEHC','GILD','HON','IDXX','INSM','INTC','INTU','ISRG','KDP','KLAC','KHC','LRCX','LIN','MAR','MRVL','MELI','META','MCHP','MU','MSFT','MSTR','MDLZ','MPWR','MNST','NFLX','NVDA','NXPI','ORLY','ODFL','PCAR','PLTR','PANW','PAYX','PYPL','PDD','PEP','QCOM','REGN','ROP','ROST','SNDK','STX','SHOP','SBUX','SNPS','TMUS','TTWO','TSLA','TXN','TRI','VRSK','VRTX','WMT','WBD','WDC','WDAY','XEL','ZS'];
+        
+        const currentTickers = list.map(a => a.ticker.toUpperCase());
+        const missing = NDQ_100.filter(t => !currentTickers.includes(t));
+        
+        if (missing.length > 0) {
+            const warning = document.createElement('div');
+            warning.style.padding = '12px';
+            warning.style.backgroundColor = '#fdedec';
+            warning.style.color = '#c0392b';
+            warning.style.marginBottom = '15px';
+            warning.style.borderRadius = '6px';
+            warning.innerHTML = `<strong>⚠️ Missing ${missing.length} Stocks (API Drops):</strong><br> ${missing.join(', ')}`;
+            listViewContent.appendChild(warning);
+        } else if (list.length > 0) {
+            const success = document.createElement('div');
+            success.style.padding = '12px';
+            success.style.backgroundColor = '#e8f8f5';
+            success.style.color = '#27ae60';
+            success.style.marginBottom = '15px';
+            success.style.borderRadius = '6px';
+            success.innerHTML = `<strong>✅ All 100 NDQ stocks loaded successfully.</strong>`;
+            listViewContent.appendChild(success);
+        }
+    }
+
     if (list.length === 0) {
-        listViewContent.innerHTML = '<div style="padding:20px; text-align:center; color:#999;">No alerts set in this list.</div>';
+        const emptyMsg = document.createElement('div');
+        emptyMsg.style.padding = '20px';
+        emptyMsg.style.textAlign = 'center';
+        emptyMsg.style.color = '#999';
+        emptyMsg.textContent = 'No alerts set in this list.';
+        listViewContent.appendChild(emptyMsg);
         return;
     }
 
@@ -185,7 +235,6 @@ function renderList() {
         
         const badge = document.createElement('span');
         badge.className = `alert-tag alert-${item.condition}`;
-        // Symbol: ▲ or ▼
         const symbol = item.condition === 'above' ? '▲' : '▼';
         badge.textContent = `${symbol} ${item.price}`;
         alertDiv.appendChild(badge);
@@ -194,7 +243,7 @@ function renderList() {
         const descDiv = document.createElement('div');
         descDiv.className = 'col-desc';
         descDiv.textContent = item.description;
-        descDiv.title = item.description; // Tooltip for full text
+        descDiv.title = item.description;
 
         // 4. Actions
         const actionDiv = document.createElement('div');
