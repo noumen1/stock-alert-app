@@ -105,81 +105,83 @@ app.get('/api/alerts', async (req, res) => {
 });
 
 // New route to generate the Altucher alerts
+// --- HELPER FUNCTION WITH AUTO-RETRY ON 429 ---
+async function fetchQuoteWithRetry(ticker, apiKey, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${apiKey}`);
+            return response.data;
+        } catch (err) {
+            if (err.response && err.response.status === 429) {
+                console.warn(`⚠️ Rate limited (429) on ${ticker}. Pausing 10s for credits to replenish (Attempt ${attempt}/${maxRetries})...`);
+                await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds on 429
+            } else {
+                console.error(`Error fetching ${ticker}:`, err.message);
+                break; // Non-429 error (invalid symbol, network down), stop retrying this ticker
+            }
+        }
+    }
+    return null;
+}
+
+// --- GENERATE ALL ALTUCHER ALERTS ---
 app.post('/api/generate-altucher', async (req, res) => {
-    // Respond immediately so the browser doesn't timeout waiting for 100 Finnhub calls
-    res.json({ message: "Background generation started. It will take ~2 minutes." });
+    res.json({ message: "Background generation started. It will take ~2.5 minutes." });
     
     console.log("Starting Altucher 9.5% Alert Generation...");
-    
-    // Clear old Altucher alerts so the database doesn't bloat daily
     await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
 
     for (let i = 0; i < NDQ_100.length; i++) {
         const ticker = NDQ_100[i];
-        try {
-            // Fetch quote. 'pc' is the Previous Close.
-            const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_API_KEY}`);
-            const prevClose = response.data.pc;
+        const quoteData = await fetchQuoteWithRetry(ticker, FINNHUB_API_KEY);
 
-            if (prevClose && prevClose > 0) {
-                // Calculate 9.5% below previous close to give a slight buffer before 10%
-                const targetPrice = (prevClose * 0.905).toFixed(2);
-
-                await Alert.create({
-                    id: Date.now() + i, // Ensure unique ID
-                    ticker: ticker,
-                    price: targetPrice,
-                    condition: 'below',
-                    description: 'Altucher 9.5% Drop',
-                    triggered: false
-                });
-            }
-        } catch (err) {
-            console.error(`Failed to setup ${ticker}:`, err.message);
+        if (quoteData && quoteData.pc && quoteData.pc > 0) {
+            const targetPrice = (quoteData.pc * 0.905).toFixed(2);
+            await Alert.create({
+                id: Date.now() + i,
+                ticker: ticker,
+                price: targetPrice,
+                condition: 'below',
+                description: 'Altucher 9.5% Drop',
+                triggered: false
+            });
         }
         
-        // 🛑 CRITICAL: Sleep for 1.2 seconds to respect Finnhub's 60 calls/min limit
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        // Paced delay (1.5s) keeps baseline speed around 40 calls/min to prevent 429s
+        await new Promise(resolve => setTimeout(resolve, 1500));
     }
     console.log("✅ Finished generating Altucher alerts.");
 });
 
-// New route to retry only specific missing stocks
+// --- RETRY MISSING ALERTS ONLY ---
 app.post('/api/retry-altucher', async (req, res) => {
     const { tickers } = req.body;
-    
     if (!tickers || !Array.isArray(tickers)) {
         return res.status(400).json({ error: "No tickers provided" });
     }
 
-    const estimatedTime = Math.ceil((tickers.length * 1.2) / 60);
-    res.json({ message: `Retry started. Will take ~${estimatedTime} minute(s).` });
+    const estimatedTime = Math.ceil((tickers.length * 1.5) / 60);
+    res.json({ message: `Retry started for ${tickers.length} stocks. Will take ~${estimatedTime} minute(s).` });
     
     console.log(`🔄 Retrying ${tickers.length} missing Altucher alerts...`);
 
     for (let i = 0; i < tickers.length; i++) {
         const ticker = tickers[i];
-        try {
-            const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FINNHUB_API_KEY}`);
-            const prevClose = response.data.pc;
+        const quoteData = await fetchQuoteWithRetry(ticker, FINNHUB_API_KEY);
 
-            if (prevClose && prevClose > 0) {
-                const targetPrice = (prevClose * 0.905).toFixed(2);
-                await Alert.create({
-                    id: Date.now() + i, // Unique ID
-                    ticker: ticker,
-                    price: targetPrice,
-                    condition: 'below',
-                    description: 'Altucher 9.5% Drop',
-                    triggered: false
-                });
-            }
-        } catch (err) {
-            console.error(`Retry failed for ${ticker}:`, err.message);
+        if (quoteData && quoteData.pc && quoteData.pc > 0) {
+            const targetPrice = (quoteData.pc * 0.905).toFixed(2);
+            await Alert.create({
+                id: Date.now() + i,
+                ticker: ticker,
+                price: targetPrice,
+                condition: 'below',
+                description: 'Altucher 9.5% Drop',
+                triggered: false
+            });
         }
         
-        // 🛑 Sleep for 1.2 seconds to respect Finnhub limits
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        await new Promise(resolve => setTimeout(resolve, 1500));
     }
     console.log("✅ Finished retrying missing alerts.");
 });
