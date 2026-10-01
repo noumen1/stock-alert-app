@@ -5,6 +5,7 @@ const axios = require('axios');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose'); // Database tool
+const yahooFinance = require('yahoo-finance2').default;
 
 const app = express();
 app.use(cors());
@@ -124,33 +125,44 @@ async function fetchQuoteWithRetry(ticker, apiKey, maxRetries = 3) {
     return null;
 }
 
-// --- GENERATE ALL ALTUCHER ALERTS ---
+// --- ALTUCHER STRATEGY VIA YAHOO FINANCE (BULK FETCH) ---
 app.post('/api/generate-altucher', async (req, res) => {
-    res.json({ message: "Background generation started. It will take ~2.5 minutes." });
+    // Respond immediately to the frontend
+    res.json({ message: "Generating alerts from Yahoo Finance..." });
+
+    console.log("⚡ Starting Altucher 9.5% Alert Generation via Yahoo Finance...");
     
-    console.log("Starting Altucher 9.5% Alert Generation...");
-    await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
+    try {
+        // Clear old Altucher alerts
+        await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
 
-    for (let i = 0; i < NDQ_100.length; i++) {
-        const ticker = NDQ_100[i];
-        const quoteData = await fetchQuoteWithRetry(ticker, FINNHUB_API_KEY);
+        // Fetch all 100 quotes in ONE batch request
+        const results = await yahooFinance.quote(NDQ_100);
 
-        if (quoteData && quoteData.pc && quoteData.pc > 0) {
-            const targetPrice = (quoteData.pc * 0.905).toFixed(2);
-            await Alert.create({
-                id: Date.now() + i,
-                ticker: ticker,
-                price: targetPrice,
-                condition: 'below',
-                description: 'Altucher 9.5% Drop',
-                triggered: false
-            });
+        let count = 0;
+        for (const stock of results) {
+            // regularMarketPreviousClose gives yesterday's official close
+            const prevClose = stock.regularMarketPreviousClose || stock.regularMarketPrice;
+
+            if (prevClose && prevClose > 0) {
+                const targetPrice = (prevClose * 0.905).toFixed(2);
+                await Alert.create({
+                    id: Date.now() + count,
+                    ticker: stock.symbol,
+                    price: targetPrice,
+                    condition: 'below',
+                    description: 'Altucher 9.5% Drop',
+                    triggered: false
+                });
+                count++;
+            }
         }
-        
-        // Paced delay (1.5s) keeps baseline speed around 40 calls/min to prevent 429s
-        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        console.log(`✅ Successfully generated ${count}/${NDQ_100.length} Altucher alerts in 2 seconds!`);
+
+    } catch (err) {
+        console.error("❌ Error fetching bulk quotes from Yahoo Finance:", err.message);
     }
-    console.log("✅ Finished generating Altucher alerts.");
 });
 
 // --- RETRY MISSING ALERTS ONLY ---
