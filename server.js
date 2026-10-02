@@ -165,6 +165,16 @@ app.post('/api/generate-altucher', async (req, res) => {
     }
 });
 
+// Explicit route to bypass the safety lock and clear Altucher alerts
+app.delete('/api/clear-altucher', async (req, res) => {
+    try {
+        await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- RETRY MISSING ALERTS ONLY ---
 app.post('/api/retry-altucher', async (req, res) => {
     const { tickers } = req.body;

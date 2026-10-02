@@ -167,9 +167,21 @@ function addGroup() {
     switchGroup(name); 
 }
 
-function deleteGroup(groupName) {
+async function deleteGroup(groupName) {
     if (Object.keys(data).length <= 1) { alert("Keep at least one list."); return; }
+    
     if (confirm(`Delete list "${groupName}"?`)) {
+        
+        // If deleting the Altucher list, explicitly tell the database to drop the safety lock
+        if (groupName === 'Altucher Daytrade') {
+            try {
+                // REPLACE with your actual Render URL
+                await fetch('https://my-stock-alerts.onrender.com/api/clear-altucher', { method: 'DELETE' });
+            } catch (e) { 
+                console.error("Failed to clear Altucher from DB", e); 
+            }
+        }
+
         delete data[groupName];
         saveData();
         const remaining = Object.keys(data).reverse();
