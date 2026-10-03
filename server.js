@@ -87,7 +87,7 @@ app.post('/api/sync-alerts', async (req, res) => {
 const NDQ_100 = [
     'ADBE','AMD','ABNB','ALNY','GOOGL','GOOG','AMZN','AEP','AMGN','ADI','AAPL','AMAT','APP',
     'ARM','ASML','ADSK','ADP','AXON','BKR','BKNG','AVGO','CDNS','CHTR','CTAS','CSCO','CCEP',
-    'CTSH','CMCSA','CEG','CPRT','CSGP','COST','CRWD','CSX','DDOG','DXCM','FANG','DASH','EA',
+    'CTSH','CMCSA','CEG','CPRT','CSGP','COST','CRWD','CSX','DDOG','DXCM','FANG','DASH',
     'EXC','FAST','FER','FTNT','GEHC','GILD','HON','IDXX','INSM','INTC','INTU','ISRG','KDP',
     'KLAC','KHC','LRCX','LIN','MAR','MRVL','MELI','META','MCHP','MU','MSFT','MSTR','MDLZ',
     'MPWR','MNST','NFLX','NVDA','NXPI','ORLY','ODFL','PCAR','PLTR','PANW','PAYX','PYPL',
@@ -136,25 +136,35 @@ app.post('/api/generate-altucher', async (req, res) => {
         // Clear old Altucher alerts
         await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
 
-        // Fetch all 100 quotes in ONE batch request
-        const results = await yahooFinance.quote(NDQ_100);
-
+        // Setup a 5-day lookback window to ensure we catch the last completed trading day
+        const lookback = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
         let count = 0;
-        for (const stock of results) {
-            // regularMarketPreviousClose gives yesterday's official close
-            const prevClose = stock.regularMarketPreviousClose || stock.regularMarketPrice;
 
-            if (prevClose && prevClose > 0) {
-                const targetPrice = (prevClose * 0.905).toFixed(2);
-                await Alert.create({
-                    id: Date.now() + count,
-                    ticker: stock.symbol,
-                    price: targetPrice,
-                    condition: 'below',
-                    description: 'Altucher 9.5% Drop',
-                    triggered: false
-                });
-                count++;
+        for (let i = 0; i < NDQ_100.length; i++) {
+            const ticker = NDQ_100[i];
+            try {
+                // Fetch historical daily candles instead of the live quote
+                const history = await yahooFinance.historical(ticker, { period1: lookback });
+                
+                if (history && history.length > 0) {
+                    const latestDailyCandle = history[history.length - 1];
+                    const latestClose = latestDailyCandle.close;
+                    
+                    if (latestClose && latestClose > 0) {
+                        const targetPrice = (latestClose * 0.905).toFixed(2);
+                        await Alert.create({
+                            id: Date.now() + count,
+                            ticker: ticker,
+                            price: targetPrice,
+                            condition: 'below',
+                            description: 'Altucher 9.5% Drop',
+                            triggered: false
+                        });
+                        count++;
+                    }
+                }
+            } catch (err) {
+                console.error(`Error processing history for ${ticker}:`, err.message);
             }
         }
 
