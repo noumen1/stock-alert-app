@@ -6,6 +6,7 @@ const cors = require('cors');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose'); // Database tool
 const yahooFinance = require('yahoo-finance2').default;
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
@@ -49,6 +50,33 @@ const transporter = nodemailer.createTransport({
 });
 
 // --- ROUTES ---
+
+// --- DYNAMIC NASDAQ-100 SCRAPER ---
+async function getNasdaq100() {
+    try {
+        const { data } = await axios.get('https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies');
+        const $ = cheerio.load(data);
+        const tickers = [];
+
+        // Find the main constituents table and iterate through its rows
+        $('#constituents tbody tr').each((i, row) => {
+            if (i === 0) return; // Skip the header row
+            
+            // The Ticker is the second column (index 1)
+            let ticker = $(row).find('td').eq(1).text().trim();
+            
+            if (ticker) {
+                // Yahoo Finance uses hyphens instead of dots (e.g., BRK-B instead of BRK.B)
+                ticker = ticker.replace('.', '-');
+                tickers.push(ticker);
+            }
+        });
+        return tickers;
+    } catch (err) {
+        console.error("❌ Failed to fetch from Wikipedia.", err.message);
+        return null;
+    }
+}
 
 app.post('/api/sync-alerts', async (req, res) => {
     const receivedGroups = req.body; 
@@ -127,23 +155,26 @@ async function fetchQuoteWithRetry(ticker, apiKey, maxRetries = 3) {
 
 // --- ALTUCHER STRATEGY VIA YAHOO FINANCE (BULK FETCH) ---
 app.post('/api/generate-altucher', async (req, res) => {
-    // Respond immediately to the frontend
     res.json({ message: "Generating alerts from Yahoo Finance..." });
 
     console.log("⚡ Starting Altucher 9.5% Alert Generation via Yahoo Finance...");
     
     try {
-        // Clear old Altucher alerts
         await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
 
-        // Setup a 5-day lookback window to ensure we catch the last completed trading day
+        // Fetch dynamic list, fallback to hardcoded list if Wikipedia fails
+        let currentNDQ = await getNasdaq100();
+        if (!currentNDQ || currentNDQ.length === 0) {
+            console.log("⚠️ Using hardcoded fallback list.");
+            currentNDQ = NDQ_100; 
+        }
+
         const lookback = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
         let count = 0;
 
-        for (let i = 0; i < NDQ_100.length; i++) {
-            const ticker = NDQ_100[i];
+        for (let i = 0; i < currentNDQ.length; i++) {
+            const ticker = currentNDQ[i];
             try {
-                // Fetch historical daily candles instead of the live quote
                 const history = await yahooFinance.historical(ticker, { period1: lookback });
                 
                 if (history && history.length > 0) {
@@ -167,11 +198,11 @@ app.post('/api/generate-altucher', async (req, res) => {
                 console.error(`Error processing history for ${ticker}:`, err.message);
             }
         }
-
-        console.log(`✅ Successfully generated ${count}/${NDQ_100.length} Altucher alerts in 2 seconds!`);
+        
+        console.log(`✅ Successfully generated ${count}/${currentNDQ.length} Altucher alerts!`);
 
     } catch (err) {
-        console.error("❌ Error fetching bulk quotes from Yahoo Finance:", err.message);
+        console.error("❌ Error generating Altucher alerts:", err.message);
     }
 });
 
