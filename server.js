@@ -54,7 +54,9 @@ const transporter = nodemailer.createTransport({
 // --- DYNAMIC NASDAQ-100 SCRAPER ---
 async function getNasdaq100() {
     try {
-        const { data } = await axios.get('https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies');
+        const { data } = await axios.get('https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies', {
+            headers: { 'User-Agent': 'Mozilla/5.0 (AltucherAlertApp)' }
+        });
         const $ = cheerio.load(data);
         const tickers = [];
 
