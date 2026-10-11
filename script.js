@@ -422,13 +422,22 @@ async function syncWithServer() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     const toggleBtn = document.getElementById('toggle-tracking-btn');
     const statusText = document.getElementById('tracking-status');
 
     if (toggleBtn) {
+        // --- 1. Fetch the initial state from the database on page load ---
+        try {
+            const response = await fetch('/api/tracking-status');
+            const data = await response.json();
+            updateTrackingUI(data.active);
+        } catch (err) {
+            console.error("Failed to fetch initial tracking status", err);
+        }
+
+        // --- 2. Handle the click to toggle the state ---
         toggleBtn.addEventListener('click', async () => {
-            // Provide immediate visual feedback while the request processes
             toggleBtn.disabled = true;
             toggleBtn.textContent = "Switching...";
 
@@ -441,27 +450,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!response.ok) throw new Error("Network response was not ok");
                 
                 const data = await response.json();
+                updateTrackingUI(data.active); // Apply the new state
                 
-                // Update the UI based on the backend's new state
-                if (data.active) {
-                    statusText.textContent = "ON";
-                    statusText.className = "status-on";
-                    toggleBtn.textContent = "Turn OFF Live Tracking";
-                    toggleBtn.className = "btn-toggle-on";
-                } else {
-                    statusText.textContent = "OFF";
-                    statusText.className = "status-off";
-                    toggleBtn.textContent = "Turn ON Live Tracking";
-                    toggleBtn.className = "btn-toggle-off";
-                }
             } catch (error) {
                 console.error('Error toggling tracking:', error);
                 alert('Failed to toggle tracking. Check the server console.');
-                // Revert button text if it failed
-                toggleBtn.textContent = statusText.textContent === "ON" ? "Turn OFF Live Tracking" : "Turn ON Live Tracking";
             } finally {
                 toggleBtn.disabled = false;
             }
         });
+    }
+
+    // Helper function to keep styling consistent
+    function updateTrackingUI(isActive) {
+        if (isActive) {
+            statusText.textContent = "ON";
+            statusText.className = "status-on";
+            toggleBtn.textContent = "Turn OFF Live Tracking";
+            toggleBtn.className = "btn-toggle-on";
+        } else {
+            statusText.textContent = "OFF";
+            statusText.className = "status-off";
+            toggleBtn.textContent = "Turn ON Live Tracking";
+            toggleBtn.className = "btn-toggle-off";
+        }
     }
 });

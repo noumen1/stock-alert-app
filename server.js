@@ -43,6 +43,12 @@ const AlertSchema = new mongoose.Schema({
 
 const Alert = mongoose.model('Alert', AlertSchema);
 
+const SettingsSchema = new mongoose.Schema({
+    key: { type: String, unique: true },
+    value: mongoose.Schema.Types.Mixed
+});
+const Settings = mongoose.model('Settings', SettingsSchema);
+
 // --- EMAIL SETUP ---
 const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -81,10 +87,37 @@ async function getNasdaq100() {
     }
 }
 
-app.post('/api/toggle-tracking', (req, res) => {
-    isTrackingActive = !isTrackingActive;
-    console.log(`Live tracking manually toggled: ${isTrackingActive ? 'ON' : 'OFF'}`);
-    res.json({ active: isTrackingActive });
+// Get current tracking status
+app.get('/api/tracking-status', async (req, res) => {
+    try {
+        let setting = await Settings.findOne({ key: 'isTrackingActive' });
+        // If it doesn't exist yet, create it and default to false
+        if (!setting) {
+            setting = await Settings.create({ key: 'isTrackingActive', value: false });
+        }
+        res.json({ active: setting.value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Toggle the tracking status
+app.post('/api/toggle-tracking', async (req, res) => {
+    try {
+        let setting = await Settings.findOne({ key: 'isTrackingActive' });
+        if (!setting) {
+            setting = await Settings.create({ key: 'isTrackingActive', value: false });
+        }
+        
+        // Flip the boolean value
+        setting.value = !setting.value;
+        await setting.save();
+        
+        console.log(`Live tracking manually toggled: ${setting.value ? 'ON' : 'OFF'}`);
+        res.json({ active: setting.value });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/api/sync-alerts', async (req, res) => {
@@ -261,28 +294,34 @@ app.post('/api/retry-altucher', async (req, res) => {
 // --- MONITORING LOOP ---
 
 async function checkPrices() {
-    if (!isTrackingActive) return;
-
-    // 2. Automated Market Hours Check
-    const now = new Date();
-    const estString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
-    const estTime = new Date(estString);
-    
-    const day = estTime.getDay();
-    const hours = estTime.getHours();
-    const minutes = estTime.getMinutes();
-
-    // 0 = Sunday, 6 = Saturday. Market open 9:30 AM to 4:00 PM (16:00) EST.
-    const isWeekend = (day === 0 || day === 6);
-    const isBeforeOpen = (hours < 9) || (hours === 9 && minutes < 30);
-    const isAfterClose = (hours >= 16);
-
-    if (isWeekend || isBeforeOpen || isAfterClose) {
-        // Silently skip Finnhub API calls outside active market hours
-        return; 
-    }
     try {
-        // 1. Get Untriggered Alerts
+        // --- 1. Check Database for Master Switch Status ---
+        const setting = await Settings.findOne({ key: 'isTrackingActive' });
+        const isTrackingActive = setting ? setting.value : false;
+        
+        if (!isTrackingActive) {
+            return; // Exit silently if tracking is turned off manually
+        }
+
+        // --- 2. Automated Market Hours Check (EST/EDT) ---
+        const now = new Date();
+        const estString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+        const estTime = new Date(estString);
+        
+        const day = estTime.getDay();
+        const hours = estTime.getHours();
+        const minutes = estTime.getMinutes();
+
+        // 0 = Sunday, 6 = Saturday. Market open 9:30 AM to 4:00 PM (16:00) EST.
+        const isWeekend = (day === 0 || day === 6);
+        const isBeforeOpen = (hours < 9) || (hours === 9 && minutes < 30);
+        const isAfterClose = (hours >= 16);
+
+        if (isWeekend || isBeforeOpen || isAfterClose) {
+            return; // Exit silently if outside US market hours
+        }
+
+        // --- 3. Get Untriggered Alerts ---
         const pendingAlerts = await Alert.find({ triggered: false });
         if (pendingAlerts.length === 0) return;
 
@@ -296,7 +335,7 @@ async function checkPrices() {
                 currentPrice = response.data.c;
             } catch (err) {
                 console.error(`API Error for ${alert.ticker}: ${err.message}`);
-                continue; 
+                continue; // Skip this ticker and move to the next one if the API fails
             }
 
             // Check Condition
@@ -307,7 +346,7 @@ async function checkPrices() {
             if (shouldTrigger) {
                 console.log(`⚡ Condition met for ${alert.ticker}. Attempting to lock...`);
 
-                // --- ATOMIC LOCK (The Fix) ---
+                // --- ATOMIC LOCK ---
                 // We try to find the alert AND flip it to true in one split-second operation.
                 // MongoDB guarantees only one request can do this.
                 const result = await Alert.updateOne(
@@ -323,7 +362,7 @@ async function checkPrices() {
                     try { await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Telegram failed", e); }
                     
                 } else {
-                    // Someone else (another loop) beat us to it. Do nothing.
+                    // Someone else (another loop instance) beat us to it. Do nothing.
                     console.log(`⚠️ ${alert.ticker} was already handled by another loop. Skipping.`);
                 }
             }
