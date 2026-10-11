@@ -7,6 +7,7 @@ const nodemailer = require('nodemailer');
 const mongoose = require('mongoose'); // Database tool
 const yahooFinance = require('yahoo-finance2').default;
 const cheerio = require('cheerio');
+let isTrackingActive = false; // Set to true if you want it on by default
 
 const app = express();
 app.use(cors());
@@ -79,6 +80,12 @@ async function getNasdaq100() {
         return null;
     }
 }
+
+app.post('/api/toggle-tracking', (req, res) => {
+    isTrackingActive = !isTrackingActive;
+    console.log(`Live tracking manually toggled: ${isTrackingActive ? 'ON' : 'OFF'}`);
+    res.json({ active: isTrackingActive });
+});
 
 app.post('/api/sync-alerts', async (req, res) => {
     const receivedGroups = req.body; 
@@ -254,6 +261,26 @@ app.post('/api/retry-altucher', async (req, res) => {
 // --- MONITORING LOOP ---
 
 async function checkPrices() {
+    if (!isTrackingActive) return;
+
+    // 2. Automated Market Hours Check
+    const now = new Date();
+    const estString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
+    const estTime = new Date(estString);
+    
+    const day = estTime.getDay();
+    const hours = estTime.getHours();
+    const minutes = estTime.getMinutes();
+
+    // 0 = Sunday, 6 = Saturday. Market open 9:30 AM to 4:00 PM (16:00) EST.
+    const isWeekend = (day === 0 || day === 6);
+    const isBeforeOpen = (hours < 9) || (hours === 9 && minutes < 30);
+    const isAfterClose = (hours >= 16);
+
+    if (isWeekend || isBeforeOpen || isAfterClose) {
+        // Silently skip Finnhub API calls outside active market hours
+        return; 
+    }
     try {
         // 1. Get Untriggered Alerts
         const pendingAlerts = await Alert.find({ triggered: false });

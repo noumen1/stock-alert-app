@@ -421,3 +421,47 @@ async function syncWithServer() {
         console.error("Could not sync with server", error);
     }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    const toggleBtn = document.getElementById('toggle-tracking-btn');
+    const statusText = document.getElementById('tracking-status');
+
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', async () => {
+            // Provide immediate visual feedback while the request processes
+            toggleBtn.disabled = true;
+            toggleBtn.textContent = "Switching...";
+
+            try {
+                const response = await fetch('/api/toggle-tracking', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (!response.ok) throw new Error("Network response was not ok");
+                
+                const data = await response.json();
+                
+                // Update the UI based on the backend's new state
+                if (data.active) {
+                    statusText.textContent = "ON";
+                    statusText.className = "status-on";
+                    toggleBtn.textContent = "Turn OFF Live Tracking";
+                    toggleBtn.className = "btn-toggle-on";
+                } else {
+                    statusText.textContent = "OFF";
+                    statusText.className = "status-off";
+                    toggleBtn.textContent = "Turn ON Live Tracking";
+                    toggleBtn.className = "btn-toggle-off";
+                }
+            } catch (error) {
+                console.error('Error toggling tracking:', error);
+                alert('Failed to toggle tracking. Check the server console.');
+                // Revert button text if it failed
+                toggleBtn.textContent = statusText.textContent === "ON" ? "Turn OFF Live Tracking" : "Turn ON Live Tracking";
+            } finally {
+                toggleBtn.disabled = false;
+            }
+        });
+    }
+});

@@ -138,3 +138,40 @@ textarea { resize: vertical; }
     padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold;
 }
 .cancel-btn:hover { background-color: #7f8c8d; }
+
+.tracking-control-panel {
+    border: 1px solid #ccc;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    background-color: #f9f9f9;
+}
+
+.status-on {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.status-off {
+    color: #dc3545;
+    font-weight: bold;
+}
+
+#toggle-tracking-btn {
+    padding: 10px 15px;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+}
+
+/* Red button when offering to turn it off, Green when offering to turn it on */
+.btn-toggle-on {
+    background-color: #dc3545; 
+    color: white;
+}
+
+.btn-toggle-off {
+    background-color: #28a745; 
+    color: white;
+}
