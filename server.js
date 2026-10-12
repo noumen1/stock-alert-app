@@ -58,35 +58,6 @@ const transporter = nodemailer.createTransport({
 
 // --- ROUTES ---
 
-// --- DYNAMIC NASDAQ-100 SCRAPER ---
-async function getNasdaq100() {
-    try {
-        const { data } = await axios.get('https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies', {
-            headers: { 'User-Agent': 'Mozilla/5.0 (AltucherAlertApp)' }
-        });
-        const $ = cheerio.load(data);
-        const tickers = [];
-
-        // Find the main constituents table and iterate through its rows
-        $('#constituents tbody tr').each((i, row) => {
-            if (i === 0) return; // Skip the header row
-            
-            // The Ticker is the second column (index 1)
-            let ticker = $(row).find('td').eq(1).text().trim();
-            
-            if (ticker) {
-                // Yahoo Finance uses hyphens instead of dots (e.g., BRK-B instead of BRK.B)
-                ticker = ticker.replace('.', '-');
-                tickers.push(ticker);
-            }
-        });
-        return tickers;
-    } catch (err) {
-        console.error("❌ Failed to fetch from Wikipedia.", err.message);
-        return null;
-    }
-}
-
 // Get current tracking status
 app.get('/api/tracking-status', async (req, res) => {
     try {
@@ -162,7 +133,7 @@ const NDQ_100 = [
     'KLAC','KHC','LRCX','LIN','MAR','MRVL','MELI','META','MCHP','MU','MSFT','MSTR','MDLZ',
     'MPWR','MNST','NFLX','NVDA','NXPI','ORLY','ODFL','PCAR','PLTR','PANW','PAYX','PYPL',
     'PDD','PEP','QCOM','REGN','ROP','ROST','SNDK','STX','SHOP','SBUX','SNPS','TMUS','TTWO',
-    'TSLA','TXN','TRI','VRSK','VRTX','WMT','WBD','WDC','WDAY','XEL','ZS'
+    'TSLA','TXN','TRI','VRSK','VRTX','WMT','WDC','WDAY','XEL','ZS', 'LITE'
 ];
 
 // New route to let the frontend load alerts directly from MongoDB
@@ -198,18 +169,13 @@ async function fetchQuoteWithRetry(ticker, apiKey, maxRetries = 3) {
 // --- ALTUCHER STRATEGY VIA YAHOO FINANCE (BULK FETCH) ---
 app.post('/api/generate-altucher', async (req, res) => {
     res.json({ message: "Generating alerts from Yahoo Finance..." });
-
     console.log("⚡ Starting Altucher 9.5% Alert Generation via Yahoo Finance...");
     
     try {
         await Alert.deleteMany({ description: 'Altucher 9.5% Drop' });
 
-        // Fetch dynamic list, fallback to hardcoded list if Wikipedia fails
-        let currentNDQ = await getNasdaq100();
-        if (!currentNDQ || currentNDQ.length === 0) {
-            console.log("⚠️ Using hardcoded fallback list.");
-            currentNDQ = NDQ_100; 
-        }
+        // Force usage of the hardcoded list directly
+        const currentNDQ = NDQ_100; 
 
         const lookback = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
         let count = 0;
@@ -293,6 +259,7 @@ app.post('/api/retry-altucher', async (req, res) => {
 
 // --- MONITORING LOOP ---
 
+// --- MONITORING LOOP (MANUAL TOGGLE ONLY) ---
 async function checkPrices() {
     try {
         // --- 1. Check Database for Master Switch Status ---
@@ -303,25 +270,7 @@ async function checkPrices() {
             return; // Exit silently if tracking is turned off manually
         }
 
-        // --- 2. Automated Market Hours Check (EST/EDT) ---
-        const now = new Date();
-        const estString = now.toLocaleString("en-US", { timeZone: "America/New_York" });
-        const estTime = new Date(estString);
-        
-        const day = estTime.getDay();
-        const hours = estTime.getHours();
-        const minutes = estTime.getMinutes();
-
-        // 0 = Sunday, 6 = Saturday. Market open 9:30 AM to 4:00 PM (16:00) EST.
-        const isWeekend = (day === 0 || day === 6);
-        const isBeforeOpen = (hours < 9) || (hours === 9 && minutes < 30);
-        const isAfterClose = (hours >= 16);
-
-        if (isWeekend || isBeforeOpen || isAfterClose) {
-            return; // Exit silently if outside US market hours
-        }
-
-        // --- 3. Get Untriggered Alerts ---
+        // --- 2. Get Untriggered Alerts (Market hours auto-sleep removed) ---
         const pendingAlerts = await Alert.find({ triggered: false });
         if (pendingAlerts.length === 0) return;
 
@@ -335,7 +284,7 @@ async function checkPrices() {
                 currentPrice = response.data.c;
             } catch (err) {
                 console.error(`API Error for ${alert.ticker}: ${err.message}`);
-                continue; // Skip this ticker and move to the next one if the API fails
+                continue; 
             }
 
             // Check Condition
@@ -346,23 +295,18 @@ async function checkPrices() {
             if (shouldTrigger) {
                 console.log(`⚡ Condition met for ${alert.ticker}. Attempting to lock...`);
 
-                // --- ATOMIC LOCK ---
-                // We try to find the alert AND flip it to true in one split-second operation.
-                // MongoDB guarantees only one request can do this.
                 const result = await Alert.updateOne(
-                    { id: alert.id, triggered: false }, // Only update if still false
+                    { id: alert.id, triggered: false }, 
                     { triggered: true }
                 );
 
                 if (result.modifiedCount === 1) {
-                    // We won the race! We are the only one sending the alert.
                     console.log(`🚨 TRIGGERED & LOCKED: ${alert.ticker} (Price: ${currentPrice})`);
                     
                     try { await sendEmail(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Email failed", e); }
                     try { await sendTelegram(alert.ticker, currentPrice, alert.price, alert.condition); } catch(e) { console.error("Telegram failed", e); }
                     
                 } else {
-                    // Someone else (another loop instance) beat us to it. Do nothing.
                     console.log(`⚠️ ${alert.ticker} was already handled by another loop. Skipping.`);
                 }
             }
