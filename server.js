@@ -8,6 +8,7 @@ const mongoose = require('mongoose'); // Database tool
 const yahooFinance = require('yahoo-finance2').default;
 const cheerio = require('cheerio');
 let isTrackingActive = false; // Set to true if you want it on by default
+let isLoopRunning = false;
 
 const app = express();
 app.use(cors());
@@ -260,37 +261,50 @@ app.post('/api/retry-altucher', async (req, res) => {
 // --- MONITORING LOOP ---
 
 // --- MONITORING LOOP (MANUAL TOGGLE ONLY) ---
+// --- MONITORING LOOP (RATE-LIMITED FOR FINNHUB) ---
 async function checkPrices() {
+    // 1. Prevent Overlapping Loops
+    if (isLoopRunning) {
+        return; // Silently exit if the previous 100-stock scan is still running
+    }
+
     try {
-        // --- 1. Check Database for Master Switch Status ---
+        // 2. Master Switch Check
         const setting = await Settings.findOne({ key: 'isTrackingActive' });
         const isTrackingActive = setting ? setting.value : false;
         
         if (!isTrackingActive) {
-            return; // Exit silently if tracking is turned off manually
+            return; 
         }
 
-        // --- 2. Get Untriggered Alerts (Market hours auto-sleep removed) ---
+        // 3. Get Untriggered Alerts
         const pendingAlerts = await Alert.find({ triggered: false });
         if (pendingAlerts.length === 0) return;
 
-        console.log(`--- Checking ${pendingAlerts.length} pending alerts ---`);
+        // Lock the loop now that we are committed to scanning
+        isLoopRunning = true; 
+        console.log(`--- Checking ${pendingAlerts.length} pending alerts (Paced at 1.1s/ticker) ---`);
 
         for (const alert of pendingAlerts) {
-            // Fetch Price
             let currentPrice = 0;
+            
             try {
                 const response = await axios.get(`https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${FINNHUB_API_KEY}`);
                 currentPrice = response.data.c;
             } catch (err) {
-                console.error(`API Error for ${alert.ticker}: ${err.message}`);
+                if (err.response && err.response.status === 429) {
+                    console.warn(`⚠️ 429 Rate limit hit on ${alert.ticker}. Finnhub is throttling.`);
+                } else {
+                    console.error(`API Error for ${alert.ticker}: ${err.message}`);
+                }
+                // Skip the rest of this loop iteration on error so we don't trigger bad data
+                await new Promise(resolve => setTimeout(resolve, 1100));
                 continue; 
             }
 
-            // Check Condition
             let shouldTrigger = false;
             if (alert.condition === 'above' && currentPrice > parseFloat(alert.price)) shouldTrigger = true;
-            else if (alert.condition === 'below' && currentPrice < parseFloat(alert.price)) shouldTrigger = true;
+            else if (alert.condition === 'below' && currentPrice > 0 && currentPrice < parseFloat(alert.price)) shouldTrigger = true;
 
             if (shouldTrigger) {
                 console.log(`⚡ Condition met for ${alert.ticker}. Attempting to lock...`);
@@ -310,9 +324,18 @@ async function checkPrices() {
                     console.log(`⚠️ ${alert.ticker} was already handled by another loop. Skipping.`);
                 }
             }
+
+            // --- THE PACER ---
+            // Wait 1.1 seconds before asking Finnhub for the next stock.
+            // This guarantees we never exceed 54 requests per minute.
+            await new Promise(resolve => setTimeout(resolve, 1100));
         }
     } catch (error) {
         console.error("Critical Loop Error:", error);
+    } finally {
+        // ALWAYS unlock the loop when finished or if it crashes, 
+        // so the next minute's interval can start a fresh scan.
+        isLoopRunning = false; 
     }
 }
 
